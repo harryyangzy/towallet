@@ -60,7 +60,7 @@ export const EXAMPLE_PASSES: PassData[] = [
     name: "Goodlife",
     type: "Membership",
     expiry: "Jun 2027",
-    color: "#F96304",
+    color: "#3E9A40",
     addedOn: "March 18, 2026",
     barcode: "GL-48291037",
   },

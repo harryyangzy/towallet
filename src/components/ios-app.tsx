@@ -26,6 +26,7 @@ import {
   DEFAULT_PASS,
   EXAMPLE_PASSES,
   colorFromSlider,
+  darkenHex,
   formatAddedOn,
   type PassData,
 } from "@/lib/pass-types";
@@ -487,17 +488,14 @@ function PassesScreen({
                 onClick={() => onOpen(pass)}
                 className="flex min-w-0 flex-1 items-stretch overflow-hidden active:opacity-90"
               >
-                <div className="flex w-[39px] shrink-0 items-center justify-center bg-[#FF9B5B]">
-                  <div className="relative size-[11px] overflow-hidden">
-                    <Image
-                      src="/figma/list-accent-dot.svg"
-                      alt=""
-                      width={11}
-                      height={11}
-                      className="size-full"
-                      unoptimized
-                    />
-                  </div>
+                <div
+                  className="flex w-[39px] shrink-0 items-center justify-center"
+                  style={{ backgroundColor: pass.color }}
+                >
+                  <div
+                    className="size-[11px] rounded-full"
+                    style={{ backgroundColor: darkenHex(pass.color, 0.28) }}
+                  />
                 </div>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-2 bg-white p-2.5">
                   <div className="flex min-w-0 flex-col gap-0.5 text-left text-[#212121]">
