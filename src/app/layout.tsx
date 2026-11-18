@@ -11,7 +11,7 @@ const beVietnamPro = Be_Vietnam_Pro({
 export const metadata: Metadata = {
   title: "ToWallet",
   description:
-    "iOS app mockup that turns screenshots into Apple Wallet passes.",
+    "Turn barcodes and membership cards into Apple Wallet passes.",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

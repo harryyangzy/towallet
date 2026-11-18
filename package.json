@@ -10,10 +10,13 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
+    "@zxing/browser": "0.2.1",
+    "@zxing/library": "0.23.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.28.0",
     "next": "^16.3.0",
+    "passkit-generator": "3.7.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "shadcn": "^4.16.1",
@@ -29,5 +32,8 @@
     "eslint-config-next": "^16.3.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "joi": "17.13.9"
   }
 }

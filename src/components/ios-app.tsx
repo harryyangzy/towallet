@@ -12,6 +12,7 @@ import Image from "next/image";
 import {
   Check,
   ChevronRight,
+  CircleAlert,
   Plus,
   ScanBarcode,
   Search,
@@ -19,21 +20,34 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import { CropSheet } from "@/components/crop-sheet";
 import { WalletCard } from "@/components/wallet-pass";
+import { scanBarcodeFromFile } from "@/lib/barcode-scan";
 import {
+  BARCODE_FORMATS,
+  BARCODE_FORMAT_LABELS,
   CARD_TYPES,
   COLOR_GRADIENT,
   DEFAULT_PASS,
+  DEFAULT_POSTER_THEME,
   EXAMPLE_PASSES,
+  POSTER_THEMES,
   colorFromSlider,
+  createPassSerial,
   darkenHex,
+  findPosterTheme,
   formatAddedOn,
+  isPosterCard,
+  supportsPosterStyle,
+  type BarcodeFormat,
+  type CardStyle,
   type PassData,
 } from "@/lib/pass-types";
 import { cn } from "@/lib/utils";
 
 type Tab = "create" | "passes";
-type FieldKey = "name" | "type" | "expiry";
+type FieldKey = "name" | "type" | "expiry" | "barcode" | "barcodeFormat";
+type ToastState = { message: string; tone: "success" | "error" };
 
 function StatusBar() {
   const [time, setTime] = useState("9:41");
@@ -44,7 +58,7 @@ function StatusBar() {
         new Date().toLocaleTimeString([], {
           hour: "numeric",
           minute: "2-digit",
-        })
+        }),
       );
     };
     tick();
@@ -67,13 +81,7 @@ function StatusBar() {
   );
 }
 
-function TabBar({
-  tab,
-  onChange,
-}: {
-  tab: Tab;
-  onChange: (tab: Tab) => void;
-}) {
+function TabBar({ tab, onChange }: { tab: Tab; onChange: (tab: Tab) => void }) {
   return (
     <div className="shrink-0 border-t border-white/10 bg-[#212121]/95 backdrop-blur-xl">
       <div className="grid h-[52px] grid-cols-2 px-2 pt-1">
@@ -82,7 +90,7 @@ function TabBar({
           onClick={() => onChange("create")}
           className={cn(
             "flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors",
-            tab === "create" ? "text-[#FF9B5B]" : "text-white/40"
+            tab === "create" ? "text-[#FF9B5B]" : "text-white/40",
           )}
         >
           <Plus className="size-5" strokeWidth={tab === "create" ? 2.6 : 2} />
@@ -93,10 +101,13 @@ function TabBar({
           onClick={() => onChange("passes")}
           className={cn(
             "flex flex-col items-center justify-center gap-0.5 text-[10px] font-bold transition-colors",
-            tab === "passes" ? "text-[#FF9B5B]" : "text-white/40"
+            tab === "passes" ? "text-[#FF9B5B]" : "text-white/40",
           )}
         >
-          <Wallet className="size-[18px]" strokeWidth={tab === "passes" ? 2.6 : 2} />
+          <Wallet
+            className="size-[18px]"
+            strokeWidth={tab === "passes" ? 2.6 : 2}
+          />
           Wallet
         </button>
       </div>
@@ -105,13 +116,23 @@ function TabBar({
   );
 }
 
-function Toast({ message }: { message: string | null }) {
-  if (!message) return null;
+function Toast({ toast }: { toast: ToastState | null }) {
+  if (!toast) return null;
   return (
-    <div className="pointer-events-none absolute inset-x-8 top-[70px] z-50 flex justify-center">
+    <div
+      role="status"
+      className="pointer-events-none absolute inset-x-8 top-[70px] z-[60] flex justify-center"
+    >
       <div className="animate-screen-in flex items-center gap-2 rounded-[14px] bg-white px-4 py-2.5 text-[13px] font-bold text-[#212121] shadow-[0_12px_30px_-12px_rgba(0,0,0,0.55)]">
-        <Check className="size-4 text-[#3E9A40]" strokeWidth={2.5} />
-        {message}
+        {toast.tone === "success" ? (
+          <Check className="size-4 shrink-0 text-[#3E9A40]" strokeWidth={2.5} />
+        ) : (
+          <CircleAlert
+            className="size-4 shrink-0 text-[#E65E5E]"
+            strokeWidth={2.5}
+          />
+        )}
+        {toast.message}
       </div>
     </div>
   );
@@ -132,7 +153,7 @@ function InfoRow({
     <div
       className={cn(
         "flex w-full items-center gap-2.5 rounded-l-[20px] border border-solid p-2.5 transition-colors",
-        active ? "border-[#FF9B5B]" : "border-white/60"
+        active ? "border-[#FF9B5B]" : "border-white/60",
       )}
       onFocusCapture={onFocus}
     >
@@ -213,10 +234,99 @@ function ColorSlider({
   );
 }
 
+function StylePicker({
+  value,
+  onChange,
+}: {
+  value: CardStyle;
+  onChange: (style: CardStyle) => void;
+}) {
+  const options: { style: CardStyle; label: string }[] = [
+    { style: "classic", label: "Classic" },
+    { style: "poster", label: "Poster" },
+  ];
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Card style"
+      className="grid grid-cols-2 gap-1 rounded-[14px] bg-white/8 p-1"
+    >
+      {options.map(({ style, label }) => (
+        <button
+          key={style}
+          type="button"
+          role="radio"
+          aria-checked={value === style}
+          onClick={() => onChange(style)}
+          className={cn(
+            "h-10 rounded-[10px] text-[14px] font-bold transition-colors",
+            value === style ? "bg-[#FF9B5B] text-[#212121]" : "text-white/70",
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ArtworkPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (artworkId: PassData["artworkId"]) => void;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Artwork"
+      className="grid grid-cols-3 gap-2.5"
+    >
+      {POSTER_THEMES.map((theme) => (
+        <button
+          key={theme.id}
+          type="button"
+          role="radio"
+          aria-checked={value === theme.id}
+          onClick={() => onChange(theme.id)}
+          className="flex min-w-0 flex-col items-center gap-1.5"
+        >
+          <span
+            className={cn(
+              "relative block aspect-[4/5] w-full overflow-hidden rounded-[12px] ring-2 ring-offset-2 ring-offset-[#212121]",
+              value === theme.id ? "ring-[#FF9B5B]" : "ring-transparent",
+            )}
+          >
+            <Image
+              src={`/pass-artwork/${theme.id}/artwork.png`}
+              alt=""
+              fill
+              sizes="90px"
+              className="object-cover"
+              unoptimized
+            />
+          </span>
+          <span
+            className={cn(
+              "text-[12px] font-bold",
+              value === theme.id ? "text-[#FF9B5B]" : "text-white/70",
+            )}
+          >
+            {theme.label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CreateScreen({
   pass,
   setPass,
-  uploaded,
+  uploadedName,
+  addingToWallet,
   onUpload,
   onScan,
   onSave,
@@ -225,7 +335,8 @@ function CreateScreen({
 }: {
   pass: PassData;
   setPass: Dispatch<SetStateAction<PassData>>;
-  uploaded: boolean;
+  uploadedName: string | null;
+  addingToWallet: boolean;
   onUpload: () => void;
   onScan: () => void;
   onSave: () => void;
@@ -235,8 +346,31 @@ function CreateScreen({
   const [activeField, setActiveField] = useState<FieldKey>("name");
   const [slider, setSlider] = useState(0.12);
 
+  const isPoster = isPosterCard(pass);
+
   const update = <K extends keyof PassData>(key: K, value: PassData[K]) => {
     setPass((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const changeType = (type: string) => {
+    setPass((prev) => ({
+      ...prev,
+      type,
+      style: supportsPosterStyle(type) ? prev.style : "classic",
+    }));
+  };
+
+  const changeStyle = (style: CardStyle) => {
+    setPass((prev) => ({
+      ...prev,
+      style,
+      artworkId:
+        style === "poster"
+          ? (prev.artworkId ?? DEFAULT_POSTER_THEME.id)
+          : prev.artworkId,
+      serial:
+        style === "poster" ? (prev.serial ?? createPassSerial()) : prev.serial,
+    }));
   };
 
   return (
@@ -255,40 +389,53 @@ function CreateScreen({
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={onUpload}
-          className="flex w-full items-center justify-between rounded-[20px] bg-[#D2D2FF] p-5 text-left active:opacity-90"
-        >
-          <div className="flex flex-col gap-0.5 text-[#212121]">
-            <span className="text-[18px] leading-none font-bold">
-              {uploaded ? "Image Uploaded" : "Upload Image"}
-            </span>
-            <span className="text-[10px] leading-none">
-              {uploaded
-                ? "Tap to replace · IMG_2048.PNG"
-                : "Barcodes, Loyalty Memberships"}
-            </span>
-          </div>
-          <ChevronRight className="size-5 text-[#212121]/50" />
-        </button>
+        {supportsPosterStyle(pass.type) && (
+          <StylePicker value={pass.style ?? "classic"} onChange={changeStyle} />
+        )}
 
-        <button
-          type="button"
-          onClick={onScan}
-          className="flex w-full items-center gap-3 rounded-[20px] border border-white/25 px-4 py-3.5 text-left active:bg-white/5"
-        >
-          <div className="flex size-9 items-center justify-center rounded-[10px] bg-[#FF9B5B]/20 text-[#FF9B5B]">
-            <ScanBarcode className="size-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[14px] font-bold text-white">Scan Barcode</p>
-            <p className="text-[11px] text-white/55">
-              Detect code from camera or screenshot
-            </p>
-          </div>
-          <ChevronRight className="size-4 text-white/35" />
-        </button>
+        {isPoster ? (
+          <ArtworkPicker
+            value={pass.artworkId ?? DEFAULT_POSTER_THEME.id}
+            onChange={(artworkId) => update("artworkId", artworkId)}
+          />
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={onUpload}
+              className="flex w-full items-center justify-between rounded-[20px] bg-[#D2D2FF] p-5 text-left active:opacity-90"
+            >
+              <div className="flex flex-col gap-0.5 text-[#212121]">
+                <span className="text-[18px] leading-none font-bold">
+                  {uploadedName ? "Image Uploaded" : "Upload Image"}
+                </span>
+                <span className="text-[10px] leading-none">
+                  {uploadedName
+                    ? `Tap to replace · ${uploadedName}`
+                    : "Barcodes, Loyalty Memberships"}
+                </span>
+              </div>
+              <ChevronRight className="size-5 text-[#212121]/50" />
+            </button>
+
+            <button
+              type="button"
+              onClick={onScan}
+              className="flex w-full items-center gap-3 rounded-[20px] border border-white/25 px-4 py-3.5 text-left active:bg-white/5"
+            >
+              <div className="flex size-9 items-center justify-center rounded-[10px] bg-[#FF9B5B]/20 text-[#FF9B5B]">
+                <ScanBarcode className="size-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[14px] font-bold text-white">Scan Barcode</p>
+                <p className="text-[11px] text-white/55">
+                  Detect code from camera or screenshot
+                </p>
+              </div>
+              <ChevronRight className="size-4 text-white/35" />
+            </button>
+          </>
+        )}
       </section>
 
       <section className="flex flex-col gap-3.5">
@@ -315,7 +462,7 @@ function CreateScreen({
           >
             <select
               value={pass.type}
-              onChange={(e) => update("type", e.target.value)}
+              onChange={(e) => changeType(e.target.value)}
               className="w-full appearance-none bg-transparent text-right text-[12px] leading-none font-normal text-white/80 outline-none"
             >
               {CARD_TYPES.map((type) => (
@@ -337,27 +484,79 @@ function CreateScreen({
               placeholder="Dec 2026"
             />
           </InfoRow>
+          {!isPoster && (
+            <>
+              <InfoRow
+                label="Barcode"
+                active={activeField === "barcode"}
+                onFocus={() => setActiveField("barcode")}
+              >
+                <input
+                  value={pass.barcode}
+                  onChange={(e) =>
+                    setPass((prev) => ({
+                      ...prev,
+                      barcode: e.target.value,
+                      stripImage: undefined,
+                    }))
+                  }
+                  className="w-full bg-transparent text-right text-[12px] leading-none font-normal text-white/80 outline-none placeholder:text-white/40"
+                  placeholder={
+                    pass.stripImage ? "Using your image" : "Number on your card"
+                  }
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </InfoRow>
+              <InfoRow
+                label="Format"
+                active={activeField === "barcodeFormat"}
+                onFocus={() => setActiveField("barcodeFormat")}
+              >
+                <select
+                  value={pass.barcodeFormat}
+                  onChange={(e) =>
+                    update("barcodeFormat", e.target.value as BarcodeFormat)
+                  }
+                  className="w-full appearance-none bg-transparent text-right text-[12px] leading-none font-normal text-white/80 outline-none"
+                >
+                  {BARCODE_FORMATS.map((format) => (
+                    <option
+                      key={format}
+                      value={format}
+                      className="bg-[#212121]"
+                    >
+                      {BARCODE_FORMAT_LABELS[format]}
+                    </option>
+                  ))}
+                </select>
+              </InfoRow>
+            </>
+          )}
         </div>
       </section>
 
-      <section className="flex flex-col gap-3.5">
-        <div className="flex items-end justify-between">
-          <h2 className="text-[24px] leading-none font-bold text-white">
-            Color
-          </h2>
-          <span
-            className="size-4 rounded-full border border-white/30"
-            style={{ backgroundColor: pass.color }}
+      {!isPoster && (
+        <section className="flex flex-col gap-3.5">
+          <div className="flex items-end justify-between">
+            <h2 className="text-[24px] leading-none font-bold text-white">
+              Color
+            </h2>
+            <span
+              className="size-4 rounded-full border border-white/30"
+              style={{ backgroundColor: pass.color }}
+            />
+          </div>
+          <ColorSlider
+            value={slider}
+            onChange={(position) => {
+              setSlider(position);
+              update("color", colorFromSlider(position));
+            }}
           />
-        </div>
-        <ColorSlider
-          value={slider}
-          onChange={(position) => {
-            setSlider(position);
-            update("color", colorFromSlider(position));
-          }}
-        />
-      </section>
+        </section>
+      )}
 
       <section className="flex flex-col items-center gap-4">
         <h2 className="w-full text-center text-[24px] leading-none font-bold text-white">
@@ -369,10 +568,11 @@ function CreateScreen({
           <button
             type="button"
             onClick={onAddToWallet}
-            className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-black text-[16px] font-bold text-white ring-1 ring-white/15 active:opacity-80"
+            disabled={addingToWallet}
+            className="flex h-[50px] w-full items-center justify-center gap-2 rounded-[14px] bg-black text-[16px] font-bold text-white ring-1 ring-white/15 active:opacity-80 disabled:opacity-60"
           >
             <Wallet className="size-4" />
-            Add to Apple Wallet
+            {addingToWallet ? "Creating Pass…" : "Add to Apple Wallet"}
           </button>
           <button
             type="button"
@@ -385,6 +585,11 @@ function CreateScreen({
       </section>
     </div>
   );
+}
+
+function listColor(pass: PassData): string {
+  if (!isPosterCard(pass)) return pass.color;
+  return (findPosterTheme(pass.artworkId) ?? DEFAULT_POSTER_THEME).background;
 }
 
 function PassesScreen({
@@ -410,8 +615,7 @@ function PassesScreen({
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return (
-      pass.name.toLowerCase().includes(q) ||
-      pass.type.toLowerCase().includes(q)
+      pass.name.toLowerCase().includes(q) || pass.type.toLowerCase().includes(q)
     );
   });
 
@@ -490,11 +694,13 @@ function PassesScreen({
               >
                 <div
                   className="flex w-[39px] shrink-0 items-center justify-center"
-                  style={{ backgroundColor: pass.color }}
+                  style={{ backgroundColor: listColor(pass) }}
                 >
                   <div
                     className="size-[11px] rounded-full"
-                    style={{ backgroundColor: darkenHex(pass.color, 0.28) }}
+                    style={{
+                      backgroundColor: darkenHex(listColor(pass), 0.28),
+                    }}
                   />
                 </div>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-2 bg-white p-2.5">
@@ -519,12 +725,14 @@ function PassesScreen({
 
 function DetailSheet({
   pass,
+  addingToWallet,
   onClose,
   onEdit,
   onAddToWallet,
   onDelete,
 }: {
   pass: PassData;
+  addingToWallet: boolean;
   onClose: () => void;
   onEdit: () => void;
   onAddToWallet: () => void;
@@ -532,7 +740,12 @@ function DetailSheet({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-black/55 backdrop-blur-[2px]">
-      <button type="button" className="flex-1" onClick={onClose} aria-label="Close" />
+      <button
+        type="button"
+        className="flex-1"
+        onClick={onClose}
+        aria-label="Close"
+      />
       <div className="animate-screen-in rounded-t-[28px] bg-[#212121] px-6 pt-3 pb-8">
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-white/20" />
         <div className="mb-4 flex items-start justify-between gap-3">
@@ -557,10 +770,11 @@ function DetailSheet({
           <button
             type="button"
             onClick={onAddToWallet}
-            className="flex h-[48px] items-center justify-center gap-2 rounded-[14px] bg-black text-[15px] font-bold text-white ring-1 ring-white/15"
+            disabled={addingToWallet}
+            className="flex h-[48px] items-center justify-center gap-2 rounded-[14px] bg-black text-[15px] font-bold text-white ring-1 ring-white/15 disabled:opacity-60"
           >
             <Wallet className="size-4" />
-            Add to Apple Wallet
+            {addingToWallet ? "Creating Pass…" : "Add to Apple Wallet"}
           </button>
           <button
             type="button"
@@ -586,18 +800,25 @@ function DetailSheet({
 export function IosApp() {
   const [tab, setTab] = useState<Tab>("create");
   const [pass, setPass] = useState<PassData>(DEFAULT_PASS);
-  const [uploaded, setUploaded] = useState(false);
+  const [uploadedName, setUploadedName] = useState<string | null>(null);
+  const [addingToWallet, setAddingToWallet] = useState(false);
+  const [cropImageUrl, setCropImageUrl] = useState<string | null>(null);
   const [saved, setSaved] = useState<PassData[]>(EXAMPLE_PASSES);
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [selected, setSelected] = useState<PassData | null>(null);
   const toastTimer = useRef<number | null>(null);
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
 
-  const showToast = (message: string) => {
-    setToast(message);
+  const showToast = (message: string, tone: ToastState["tone"] = "success") => {
+    setToast({ message, tone });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2200);
+    toastTimer.current = window.setTimeout(
+      () => setToast(null),
+      tone === "error" ? 4000 : 2200,
+    );
   };
 
   useEffect(() => {
@@ -606,45 +827,150 @@ export function IosApp() {
     };
   }, []);
 
-  const handleUpload = () => {
-    setUploaded(true);
-    setPass((prev) => ({
-      ...prev,
-      name: prev.name || "Goodlife",
-      barcode: prev.barcode || "GL-48291037",
-    }));
-    showToast("Screenshot attached");
+  const handleImage = async (file: File | undefined) => {
+    if (!file) return;
+    setUploadedName(file.name);
+
+    try {
+      const scanned = await scanBarcodeFromFile(file);
+      if (!scanned.unsupportedFormat) {
+        setPass((prev) => ({
+          ...prev,
+          barcode: scanned.value,
+          barcodeFormat: scanned.format,
+          stripImage: undefined,
+        }));
+        showToast("Barcode detected");
+        return;
+      }
+    } catch {
+      // Unreadable codes fall through to showing the image itself.
+    }
+    setCropImageUrl(URL.createObjectURL(file));
   };
 
-  const handleScan = () => {
-    setUploaded(true);
-    setPass((prev) => ({
-      ...prev,
-      barcode: `SC-${Math.floor(100000 + Math.random() * 900000)}`,
-      name: prev.name || "Scanned Card",
-    }));
-    showToast("Barcode detected");
+  const closeCrop = () => {
+    if (cropImageUrl) URL.revokeObjectURL(cropImageUrl);
+    setCropImageUrl(null);
   };
 
   const handleSave = () => {
-    const next: PassData = {
-      ...pass,
-      id: `saved-${Date.now()}`,
-      addedOn: formatAddedOn(),
-      barcode: pass.barcode || `TW-${Date.now().toString().slice(-6)}`,
-    };
-    setSaved((prev) => [next, ...prev]);
+    const isPoster = isPosterCard(pass);
+    if (!isPoster && !pass.barcode.trim() && !pass.stripImage) {
+      showToast("Add your card's barcode first", "error");
+      return;
+    }
+
+    const card: PassData = isPoster
+      ? { ...pass, barcode: "", stripImage: undefined }
+      : pass;
+
+    if (saved.find((item) => item.id === pass.id)?.style === "poster") {
+      // Editing a Poster card updates it so its Wallet serial stays unique.
+      setSaved((prev) =>
+        prev.map((item) =>
+          item.id === pass.id ? { ...card, addedOn: item.addedOn } : item,
+        ),
+      );
+    } else {
+      const next: PassData = {
+        ...card,
+        id: `saved-${Date.now()}`,
+        addedOn: formatAddedOn(),
+      };
+      setSaved((prev) => [next, ...prev]);
+      // The next Poster made from this draft must not replace the saved card.
+      if (isPoster) {
+        setPass((prev) => ({ ...prev, serial: createPassSerial() }));
+      }
+    }
     showToast("Saved to Wallet");
     setTab("passes");
   };
 
-  const handleAddToWallet = () => {
-    showToast("Added to Apple Wallet");
+  const handleAddToWallet = async (card: PassData) => {
+    const isPoster = isPosterCard(card);
+    if (!isPoster && !card.barcode.trim() && !card.stripImage) {
+      showToast("Add your card's barcode first", "error");
+      return;
+    }
+
+    const commonFields = {
+      name: card.name,
+      type: card.type,
+      expiry: card.expiry,
+      color: card.color,
+    };
+    const fields: Record<string, string> = isPoster
+      ? {
+          ...commonFields,
+          style: "poster",
+          artworkId: card.artworkId ?? DEFAULT_POSTER_THEME.id,
+          serial: card.serial ?? "",
+        }
+      : {
+          ...commonFields,
+          barcode: card.barcode,
+          barcodeFormat: card.barcodeFormat,
+        };
+    const url = `/api/pass?${new URLSearchParams(fields)}`;
+    const imageFields =
+      !isPoster && card.stripImage
+        ? { ...fields, stripImage: card.stripImage }
+        : null;
+
+    setAddingToWallet(true);
+    try {
+      // Check first so a failure shows here instead of replacing the app page.
+      let body: FormData | undefined;
+      if (imageFields) {
+        body = new FormData();
+        for (const [key, value] of Object.entries(imageFields)) {
+          body.append(key, value);
+        }
+      }
+      const response = await fetch(
+        imageFields ? "/api/pass" : url,
+        imageFields ? { method: "POST", body } : undefined,
+      );
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        showToast(body?.error ?? "Couldn't create the pass", "error");
+        return;
+      }
+      // Safari only opens the Add to Wallet sheet for a real navigation.
+      if (imageFields) {
+        const form = document.createElement("form");
+        form.method = "POST";
+        form.action = "/api/pass";
+        form.enctype = "multipart/form-data";
+        form.hidden = true;
+        for (const [key, value] of Object.entries(imageFields)) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = value;
+          form.append(input);
+        }
+        document.body.append(form);
+        form.submit();
+        form.remove();
+      } else {
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- this is a file download, not a page
+        window.location.assign(url);
+      }
+    } catch {
+      showToast("Couldn't reach the server. Try again.", "error");
+    } finally {
+      setAddingToWallet(false);
+    }
   };
 
   const handleReset = () => {
     setPass(DEFAULT_PASS);
-    setUploaded(false);
+    setUploadedName(null);
     showToast("Draft cleared");
   };
 
@@ -654,24 +980,49 @@ export function IosApp() {
         className={cn(
           "relative flex h-dvh w-full flex-col overflow-hidden bg-[#212121]",
           "sm:h-[844px] sm:w-[390px] sm:rounded-[52px] sm:border-[10px] sm:border-[#1c1c1e]",
-          "sm:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.65)]"
+          "sm:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.65)]",
         )}
       >
         <div className="pointer-events-none absolute inset-0 z-40 hidden rounded-[42px] ring-1 ring-white/10 sm:block" />
 
         <StatusBar />
-        <Toast message={toast} />
+        <Toast toast={toast} />
+
+        <input
+          ref={uploadInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          aria-label="Upload a barcode image"
+          onChange={(e) => {
+            void handleImage(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={cameraInput}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          aria-label="Take a photo of a barcode"
+          onChange={(e) => {
+            void handleImage(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tab === "create" ? (
             <CreateScreen
               pass={pass}
               setPass={setPass}
-              uploaded={uploaded}
-              onUpload={handleUpload}
-              onScan={handleScan}
+              uploadedName={uploadedName}
+              addingToWallet={addingToWallet}
+              onUpload={() => uploadInput.current?.click()}
+              onScan={() => cameraInput.current?.click()}
               onSave={handleSave}
-              onAddToWallet={handleAddToWallet}
+              onAddToWallet={() => void handleAddToWallet(pass)}
               onReset={handleReset}
             />
           ) : (
@@ -693,20 +1044,30 @@ export function IosApp() {
 
         <TabBar tab={tab} onChange={setTab} />
 
+        {cropImageUrl && (
+          <CropSheet
+            imageUrl={cropImageUrl}
+            onCancel={closeCrop}
+            onApply={(stripImage) => {
+              setPass((prev) => ({ ...prev, barcode: "", stripImage }));
+              closeCrop();
+              showToast("Image added to your card");
+            }}
+          />
+        )}
+
         {selected && (
           <DetailSheet
             pass={selected}
+            addingToWallet={addingToWallet}
             onClose={() => setSelected(null)}
             onEdit={() => {
               setPass(selected);
-              setUploaded(true);
+              setUploadedName(null);
               setSelected(null);
               setTab("create");
             }}
-            onAddToWallet={() => {
-              showToast("Added to Apple Wallet");
-              setSelected(null);
-            }}
+            onAddToWallet={() => void handleAddToWallet(selected)}
             onDelete={() => {
               setSaved((prev) => prev.filter((p) => p.id !== selected.id));
               setSelected(null);

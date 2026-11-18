@@ -1,7 +1,14 @@
 "use client";
 
+import Image from "next/image";
 import { cn } from "@/lib/utils";
-import { darkenHex, type PassData } from "@/lib/pass-types";
+import {
+  DEFAULT_POSTER_THEME,
+  darkenHex,
+  findPosterTheme,
+  isPosterCard,
+  type PassData,
+} from "@/lib/pass-types";
 
 interface WalletCardProps {
   pass: PassData;
@@ -40,18 +47,78 @@ function FakeBarcode({ value }: { value: string }) {
 const ACCENT_PATH =
   "M0 40.0134C0 14.7868 23.0664 -4.14114 47.8076 0.782887L276.808 46.36C295.522 50.0847 309 66.5093 309 85.5905V283.058L222.901 332.767H26C11.6406 332.767 0 321.127 0 306.767V40.0134Z";
 
+function PosterCard({ pass, className }: WalletCardProps) {
+  const theme = findPosterTheme(pass.artworkId) ?? DEFAULT_POSTER_THEME;
+
+  return (
+    <div
+      className={cn(
+        "relative aspect-[4/5] w-full overflow-hidden rounded-[26px] border border-white/10",
+        className,
+      )}
+      style={{ backgroundColor: theme.background, color: theme.foreground }}
+      data-testid="poster-card"
+    >
+      <Image
+        src={`/pass-artwork/${theme.id}/artwork@2x.png`}
+        alt=""
+        fill
+        sizes="309px"
+        className="object-cover"
+        unoptimized
+      />
+
+      {pass.expiry && (
+        <div className="absolute top-4 right-5 z-10 text-right">
+          <p
+            className="text-[9px] leading-none font-bold tracking-[0.08em]"
+            style={{ color: theme.labelColor }}
+          >
+            EXPIRES
+          </p>
+          <p className="mt-1 text-[13px] leading-none font-bold">
+            {pass.expiry}
+          </p>
+        </div>
+      )}
+
+      <div
+        className="absolute inset-x-0 bottom-0 z-10 flex flex-col gap-3 px-5 pt-3 pb-5"
+        style={{ backgroundColor: `${theme.background}D9` }}
+      >
+        <p className="truncate text-[24px] leading-tight font-bold">
+          {pass.name || "Card"}
+        </p>
+        <div>
+          <p
+            className="text-[9px] leading-none font-bold tracking-[0.08em]"
+            style={{ color: theme.labelColor }}
+          >
+            TYPE
+          </p>
+          <p className="mt-1 text-[13px] leading-none font-bold">{pass.type}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function WalletCard({
   pass,
   className,
   showBarcode = true,
 }: WalletCardProps) {
+  if (isPosterCard(pass)) {
+    return <PosterCard pass={pass} className={className} />;
+  }
+
   const accent = darkenHex(pass.color, 0.18);
 
   return (
     <div
       className={cn(
         "relative aspect-[309/385] w-full overflow-hidden rounded-[26px] border border-white/10",
-        className
+        className,
       )}
       style={{ backgroundColor: pass.color }}
     >
@@ -74,7 +141,16 @@ export function WalletCard({
 
       {showBarcode && (
         <div className="absolute inset-x-6 bottom-10 z-20 rounded-[12px] bg-white/95 px-3 py-2.5 shadow-sm">
-          <FakeBarcode value={pass.barcode || "TOWALLET"} />
+          {pass.stripImage ? (
+            // eslint-disable-next-line @next/next/no-img-element -- local data URL preview
+            <img
+              src={pass.stripImage}
+              alt="Barcode from your image"
+              className="w-full rounded-sm"
+            />
+          ) : (
+            <FakeBarcode value={pass.barcode || "TOWALLET"} />
+          )}
         </div>
       )}
 
