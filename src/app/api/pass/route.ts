@@ -26,16 +26,19 @@ function createPassResponse(params: URLSearchParams) {
       return Response.json({ error: error.message }, { status: 400 });
     }
     if (error instanceof PassConfigError) {
-      console.error(`Apple Wallet signing is not configured: ${error.message}`);
+      console.error("Apple Wallet signing is not configured.");
       return Response.json(
         { error: "Apple Wallet signing isn't set up yet." },
-        { status: 503 }
+        { status: 503 },
       );
     }
-    console.error("Could not create Apple Wallet pass", error);
+    console.error(
+      "Could not create Apple Wallet pass:",
+      error instanceof Error ? error.name : "unknown error",
+    );
     return Response.json(
       { error: "Couldn't create the pass. Check the signing certificates." },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -47,7 +50,10 @@ export async function GET(request: NextRequest) {
 /** Passes with an image are too large to send in a URL. */
 export async function POST(request: NextRequest) {
   if (Number(request.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) {
-    return Response.json({ error: "That image is too large." }, { status: 413 });
+    return Response.json(
+      { error: "That image is too large." },
+      { status: 413 },
+    );
   }
 
   let form: FormData;

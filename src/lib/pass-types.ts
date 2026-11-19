@@ -13,7 +13,10 @@ export interface PassData {
   stripImage?: string;
   /** Cards without a style are Classic. */
   style?: CardStyle;
-  artworkId?: PosterArtworkId;
+  /** Cropped Poster image, kept only while the app is open. */
+  posterImage?: Blob;
+  /** Object URL for posterImage, revoked once no card uses it. */
+  posterImageUrl?: string;
   /** Created once for a Poster card and reused every time it is added. */
   serial?: string;
 }
@@ -25,38 +28,10 @@ export const CARD_STYLES = ["classic", "poster"] as const;
 
 export type CardStyle = (typeof CARD_STYLES)[number];
 
-export const POSTER_THEMES = [
-  {
-    id: "ember",
-    label: "Ember",
-    background: "#1A0E24",
-    foreground: "#FFFFFF",
-    labelColor: "#FFD9B8",
-  },
-  {
-    id: "tide",
-    label: "Tide",
-    background: "#051626",
-    foreground: "#FFFFFF",
-    labelColor: "#BDF3EA",
-  },
-  {
-    id: "grove",
-    label: "Grove",
-    background: "#0A1D14",
-    foreground: "#FFFFFF",
-    labelColor: "#E4EDA8",
-  },
-] as const;
-
-export type PosterTheme = (typeof POSTER_THEMES)[number];
-export type PosterArtworkId = PosterTheme["id"];
-
-export const DEFAULT_POSTER_THEME: PosterTheme = POSTER_THEMES[0];
-
-export function findPosterTheme(id: string | null | undefined) {
-  return POSTER_THEMES.find((theme) => theme.id === id);
-}
+export const POSTER_WIDTH = 1074;
+export const POSTER_HEIGHT = 1344;
+export const MAX_POSTER_UPLOAD_BYTES = 4 * 1024 * 1024;
+export const MAX_POSTER_SOURCE_BYTES = 40 * 1024 * 1024;
 
 export function supportsPosterStyle(type: string): boolean {
   return type === "Membership" || type === "Loyalty";

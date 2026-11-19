@@ -1,20 +1,15 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { deflateSync } from "node:zlib";
 import { PKPass, PassType } from "passkit-generator";
 import {
   BARCODE_FORMATS,
-  CARD_STYLES,
   CARD_TYPES,
   STRIP_HEIGHT,
   STRIP_WIDTH,
-  findPosterTheme,
   supportsPosterStyle,
   type BarcodeFormat,
-  type CardStyle,
-  type PosterTheme,
 } from "@/lib/pass-types";
+import type { PosterImages } from "@/lib/poster-image";
 
 /**
  * Name of the poster image inside the .pkpass bundle, without its extension.
@@ -23,6 +18,7 @@ import {
 const POSTER_IMAGE_NAME = "artwork";
 
 const IMAGE_SCALES = ["", "@2x", "@3x"] as const;
+const MAX_POSTER_PASS_BYTES = 5 * 1024 * 1024;
 
 const MAX_STRIP_BYTES = 3 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([
@@ -51,8 +47,13 @@ export interface PassInput {
   barcode: string;
   barcodeFormat: BarcodeFormat;
   stripImage: Buffer | null;
-  style: CardStyle;
-  poster: { theme: PosterTheme; serial: string } | null;
+}
+
+export interface PosterFields {
+  name: string;
+  type: (typeof CARD_TYPES)[number];
+  expiry: string;
+  serial: string;
 }
 
 export class PassInputError extends Error {}
@@ -78,63 +79,62 @@ function parseStripImage(dataUrl: string | null): Buffer | null {
   return image;
 }
 
-function parseCommonFields(params: URLSearchParams) {
-  const name = params.get("name")?.trim() ?? "";
-  const type = params.get("type") ?? "";
-  const expiry = params.get("expiry")?.trim() ?? "";
-  const color = params.get("color") ?? "";
+function parseCardText(values: { name: string; type: string; expiry: string }) {
+  const name = values.name.trim();
+  const expiry = values.expiry.trim();
 
   if (!name || name.length > 64) {
     throw new PassInputError("Enter a card name up to 64 characters.");
   }
-  if (!CARD_TYPES.includes(type as PassInput["type"])) {
+  if (!CARD_TYPES.includes(values.type as PassInput["type"])) {
     throw new PassInputError("Choose a valid card type.");
   }
   if (expiry.length > 40) {
     throw new PassInputError("Keep the expiry to 40 characters or fewer.");
   }
-  if (!/^#[0-9a-f]{6}$/i.test(color)) {
-    throw new PassInputError("Choose a valid card colour.");
-  }
 
-  return { name, type: type as PassInput["type"], expiry, color };
+  return { name, type: values.type as PassInput["type"], expiry };
 }
 
-function parsePosterInput(params: URLSearchParams): PassInput {
-  const common = parseCommonFields(params);
-  const theme = findPosterTheme(params.get("artworkId"));
-  const serial = params.get("serial") ?? "";
+export function parsePosterFields(form: FormData): PosterFields {
+  const text = (key: string) => {
+    const value = form.get(key);
+    return typeof value === "string" ? value : "";
+  };
+  const fields = parseCardText({
+    name: text("name"),
+    type: text("type"),
+    expiry: text("expiry"),
+  });
+  const serial = text("serial");
 
-  if (!supportsPosterStyle(common.type)) {
+  if (!supportsPosterStyle(fields.type)) {
     throw new PassInputError(
       "Poster is only available for Membership and Loyalty cards.",
     );
-  }
-  if (!theme) {
-    throw new PassInputError("Choose a valid artwork theme.");
   }
   if (!/^[0-9a-f]{32}$/.test(serial)) {
     throw new PassInputError("This card has an invalid serial number.");
   }
 
-  return {
-    ...common,
-    barcode: "",
-    barcodeFormat: "CODE128",
-    stripImage: null,
-    style: "poster",
-    poster: { theme, serial },
-  };
+  return { ...fields, serial };
 }
 
 export function parsePassInput(params: URLSearchParams): PassInput {
-  const style = params.get("style") ?? "classic";
-  if (!CARD_STYLES.includes(style as CardStyle)) {
+  if ((params.get("style") ?? "classic") !== "classic") {
     throw new PassInputError("Choose a valid card style.");
   }
-  if (style === "poster") return parsePosterInput(params);
 
-  const { name, type, expiry, color } = parseCommonFields(params);
+  const { name, type, expiry } = parseCardText({
+    name: params.get("name") ?? "",
+    type: params.get("type") ?? "",
+    expiry: params.get("expiry") ?? "",
+  });
+  const color = params.get("color") ?? "";
+  if (!/^#[0-9a-f]{6}$/i.test(color)) {
+    throw new PassInputError("Choose a valid card colour.");
+  }
+
   const stripImage = parseStripImage(params.get("stripImage"));
   const barcode = stripImage ? "" : (params.get("barcode")?.trim() ?? "");
   const barcodeFormat = params.get("barcodeFormat") ?? "";
@@ -163,8 +163,6 @@ export function parsePassInput(params: URLSearchParams): PassInput {
     barcode,
     barcodeFormat: barcodeFormat as BarcodeFormat,
     stripImage,
-    style: "classic",
-    poster: null,
   };
 }
 
@@ -273,43 +271,38 @@ function signingDetails() {
   };
 }
 
-/** Reads bundled images for a theme that has already passed the allowlist. */
-function posterImages(theme: PosterTheme): Record<string, Buffer> {
-  const folder = path.join(process.cwd(), "public", "pass-artwork", theme.id);
-  const images: Record<string, Buffer> = {};
-
-  for (const scale of IMAGE_SCALES) {
-    images[`${POSTER_IMAGE_NAME}${scale}.png`] = readFileSync(
-      path.join(folder, `artwork${scale}.png`),
-    );
-    images[`strip${scale}.png`] = readFileSync(
-      path.join(folder, `strip${scale}.png`),
-    );
-  }
-  return images;
+function hexFromRgb(color: readonly number[]): string {
+  return `#${color.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function buildPosterPass(
-  input: PassInput,
-  { theme, serial }: NonNullable<PassInput["poster"]>,
+export function buildPosterPass(
+  input: PosterFields,
+  { artwork, strip, colors }: PosterImages,
 ): Buffer {
   const { certificates, ...identity } = signingDetails();
+  const iconColor = hexFromRgb(colors.background);
+
+  const images: Record<string, Buffer> = {};
+  IMAGE_SCALES.forEach((scale, index) => {
+    images[`${POSTER_IMAGE_NAME}${scale}.png`] = artwork[index];
+    images[`strip${scale}.png`] = strip[index];
+  });
 
   const pass = new PKPass(
     {
-      "icon.png": iconPng(29, theme.background),
-      "icon@2x.png": iconPng(58, theme.background),
-      "icon@3x.png": iconPng(87, theme.background),
-      ...posterImages(theme),
+      "icon.png": iconPng(29, iconColor),
+      "icon@2x.png": iconPng(58, iconColor),
+      "icon@3x.png": iconPng(87, iconColor),
+      ...images,
     },
     certificates,
     {
       ...identity,
-      serialNumber: serial,
+      serialNumber: input.serial,
       description: `${input.name} ${input.type}`,
-      backgroundColor: cssRgb(rgb(theme.background)),
-      foregroundColor: cssRgb(rgb(theme.foreground)),
-      labelColor: cssRgb(rgb(theme.labelColor)),
+      backgroundColor: cssRgb(colors.background),
+      foregroundColor: cssRgb(colors.foreground),
+      labelColor: cssRgb(colors.label),
     },
   );
 
@@ -334,12 +327,15 @@ function buildPosterPass(
   }
 
   pass.types.push(poster, fallback);
-  return pass.getAsBuffer();
+
+  const data = pass.getAsBuffer();
+  if (data.length > MAX_POSTER_PASS_BYTES) {
+    throw new PassInputError("That image makes the pass too large.");
+  }
+  return data;
 }
 
 export function buildPass(input: PassInput): Buffer {
-  if (input.poster) return buildPosterPass(input, input.poster);
-
   const { certificates, passTypeIdentifier, teamIdentifier, organizationName } =
     signingDetails();
 

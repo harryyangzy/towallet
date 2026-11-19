@@ -13,6 +13,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  ImagePlus,
   Plus,
   ScanBarcode,
   Search,
@@ -21,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { CropSheet } from "@/components/crop-sheet";
+import { PosterCropSheet } from "@/components/poster-crop-sheet";
 import { WalletCard } from "@/components/wallet-pass";
 import { scanBarcodeFromFile } from "@/lib/barcode-scan";
 import {
@@ -29,13 +31,10 @@ import {
   CARD_TYPES,
   COLOR_GRADIENT,
   DEFAULT_PASS,
-  DEFAULT_POSTER_THEME,
   EXAMPLE_PASSES,
-  POSTER_THEMES,
   colorFromSlider,
   createPassSerial,
   darkenHex,
-  findPosterTheme,
   formatAddedOn,
   isPosterCard,
   supportsPosterStyle,
@@ -43,6 +42,11 @@ import {
   type CardStyle,
   type PassData,
 } from "@/lib/pass-types";
+import {
+  PosterImageReadError,
+  loadPosterSource,
+  type PosterSource,
+} from "@/lib/poster-crop";
 import { cn } from "@/lib/utils";
 
 type Tab = "create" | "passes";
@@ -271,63 +275,13 @@ function StylePicker({
   );
 }
 
-function ArtworkPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (artworkId: PassData["artworkId"]) => void;
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Artwork"
-      className="grid grid-cols-3 gap-2.5"
-    >
-      {POSTER_THEMES.map((theme) => (
-        <button
-          key={theme.id}
-          type="button"
-          role="radio"
-          aria-checked={value === theme.id}
-          onClick={() => onChange(theme.id)}
-          className="flex min-w-0 flex-col items-center gap-1.5"
-        >
-          <span
-            className={cn(
-              "relative block aspect-[4/5] w-full overflow-hidden rounded-[12px] ring-2 ring-offset-2 ring-offset-[#212121]",
-              value === theme.id ? "ring-[#FF9B5B]" : "ring-transparent",
-            )}
-          >
-            <Image
-              src={`/pass-artwork/${theme.id}/artwork.png`}
-              alt=""
-              fill
-              sizes="90px"
-              className="object-cover"
-              unoptimized
-            />
-          </span>
-          <span
-            className={cn(
-              "text-[12px] font-bold",
-              value === theme.id ? "text-[#FF9B5B]" : "text-white/70",
-            )}
-          >
-            {theme.label}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function CreateScreen({
   pass,
   setPass,
   uploadedName,
   addingToWallet,
   onUpload,
+  onPosterUpload,
   onScan,
   onSave,
   onAddToWallet,
@@ -338,6 +292,7 @@ function CreateScreen({
   uploadedName: string | null;
   addingToWallet: boolean;
   onUpload: () => void;
+  onPosterUpload: () => void;
   onScan: () => void;
   onSave: () => void;
   onAddToWallet: () => void;
@@ -364,10 +319,6 @@ function CreateScreen({
     setPass((prev) => ({
       ...prev,
       style,
-      artworkId:
-        style === "poster"
-          ? (prev.artworkId ?? DEFAULT_POSTER_THEME.id)
-          : prev.artworkId,
       serial:
         style === "poster" ? (prev.serial ?? createPassSerial()) : prev.serial,
     }));
@@ -394,10 +345,21 @@ function CreateScreen({
         )}
 
         {isPoster ? (
-          <ArtworkPicker
-            value={pass.artworkId ?? DEFAULT_POSTER_THEME.id}
-            onChange={(artworkId) => update("artworkId", artworkId)}
-          />
+          <button
+            type="button"
+            onClick={onPosterUpload}
+            className="flex w-full items-center justify-between gap-3 rounded-[20px] bg-[#D2D2FF] p-5 text-left active:opacity-90"
+          >
+            <div className="flex flex-col gap-1 text-[#212121]">
+              <span className="text-[18px] leading-none font-bold">
+                {pass.posterImage ? "Change Image" : "Upload Poster Image"}
+              </span>
+              <span className="text-[10px] leading-none">
+                Choose a photo and crop it to fit your card
+              </span>
+            </div>
+            <ImagePlus className="size-5 shrink-0 text-[#212121]/60" />
+          </button>
         ) : (
           <>
             <button
@@ -587,11 +549,6 @@ function CreateScreen({
   );
 }
 
-function listColor(pass: PassData): string {
-  if (!isPosterCard(pass)) return pass.color;
-  return (findPosterTheme(pass.artworkId) ?? DEFAULT_POSTER_THEME).background;
-}
-
 function PassesScreen({
   passes,
   editing,
@@ -694,13 +651,11 @@ function PassesScreen({
               >
                 <div
                   className="flex w-[39px] shrink-0 items-center justify-center"
-                  style={{ backgroundColor: listColor(pass) }}
+                  style={{ backgroundColor: pass.color }}
                 >
                   <div
                     className="size-[11px] rounded-full"
-                    style={{
-                      backgroundColor: darkenHex(listColor(pass), 0.28),
-                    }}
+                    style={{ backgroundColor: darkenHex(pass.color, 0.28) }}
                   />
                 </div>
                 <div className="flex min-w-0 flex-1 items-center justify-between gap-2 bg-white p-2.5">
@@ -803,6 +758,7 @@ export function IosApp() {
   const [uploadedName, setUploadedName] = useState<string | null>(null);
   const [addingToWallet, setAddingToWallet] = useState(false);
   const [cropImageUrl, setCropImageUrl] = useState<string | null>(null);
+  const [posterSource, setPosterSource] = useState<PosterSource | null>(null);
   const [saved, setSaved] = useState<PassData[]>(EXAMPLE_PASSES);
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState("");
@@ -811,6 +767,8 @@ export function IosApp() {
   const toastTimer = useRef<number | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
+  const posterInput = useRef<HTMLInputElement>(null);
+  const posterUrls = useRef(new Set<string>());
 
   const showToast = (message: string, tone: ToastState["tone"] = "success") => {
     setToast({ message, tone });
@@ -826,6 +784,48 @@ export function IosApp() {
       if (toastTimer.current) window.clearTimeout(toastTimer.current);
     };
   }, []);
+
+  // Cards share cropped images, so a URL is revoked once no card uses it.
+  useEffect(() => {
+    const inUse = new Set(
+      [pass, selected, ...saved].flatMap((card) =>
+        card?.posterImageUrl ? [card.posterImageUrl] : [],
+      ),
+    );
+    for (const url of posterUrls.current) {
+      if (inUse.has(url)) continue;
+      URL.revokeObjectURL(url);
+      posterUrls.current.delete(url);
+    }
+    for (const url of inUse) posterUrls.current.add(url);
+  }, [pass, saved, selected]);
+
+  useEffect(() => {
+    const urls = posterUrls.current;
+    return () => {
+      for (const url of urls) URL.revokeObjectURL(url);
+      urls.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!posterSource) return;
+    return () => URL.revokeObjectURL(posterSource.url);
+  }, [posterSource]);
+
+  const handlePosterFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      setPosterSource(await loadPosterSource(file));
+    } catch (error) {
+      showToast(
+        error instanceof PosterImageReadError
+          ? error.message
+          : "That image couldn't be read.",
+        "error",
+      );
+    }
+  };
 
   const handleImage = async (file: File | undefined) => {
     if (!file) return;
@@ -856,6 +856,10 @@ export function IosApp() {
 
   const handleSave = () => {
     const isPoster = isPosterCard(pass);
+    if (isPoster && !pass.posterImage) {
+      showToast("Add an image first", "error");
+      return;
+    }
     if (!isPoster && !pass.barcode.trim() && !pass.stripImage) {
       showToast("Add your card's barcode first", "error");
       return;
@@ -863,7 +867,7 @@ export function IosApp() {
 
     const card: PassData = isPoster
       ? { ...pass, barcode: "", stripImage: undefined }
-      : pass;
+      : { ...pass, posterImage: undefined, posterImageUrl: undefined };
 
     if (saved.find((item) => item.id === pass.id)?.style === "poster") {
       // Editing a Poster card updates it so its Wallet serial stays unique.
@@ -888,36 +892,64 @@ export function IosApp() {
     setTab("passes");
   };
 
+  const addPosterToWallet = async (card: PassData) => {
+    if (!card.posterImage) {
+      showToast("Add an image first", "error");
+      return;
+    }
+
+    const body = new FormData();
+    body.append("name", card.name);
+    body.append("type", card.type);
+    body.append("expiry", card.expiry);
+    body.append("serial", card.serial ?? "");
+    body.append("image", card.posterImage, "poster.jpg");
+
+    setAddingToWallet(true);
+    try {
+      const response = await fetch("/api/pass/poster", {
+        method: "POST",
+        body,
+      });
+      const result = (await response.json().catch(() => null)) as {
+        url?: string;
+        error?: string;
+      } | null;
+      if (!response.ok || !result?.url) {
+        showToast(result?.error ?? "Couldn't create the pass", "error");
+        return;
+      }
+      // Safari only opens the Add to Wallet sheet for a real navigation.
+      window.location.assign(result.url);
+    } catch {
+      showToast("Couldn't reach the server. Try again.", "error");
+    } finally {
+      setAddingToWallet(false);
+    }
+  };
+
   const handleAddToWallet = async (card: PassData) => {
-    const isPoster = isPosterCard(card);
-    if (!isPoster && !card.barcode.trim() && !card.stripImage) {
+    if (isPosterCard(card)) {
+      await addPosterToWallet(card);
+      return;
+    }
+    if (!card.barcode.trim() && !card.stripImage) {
       showToast("Add your card's barcode first", "error");
       return;
     }
 
-    const commonFields = {
+    const fields: Record<string, string> = {
       name: card.name,
       type: card.type,
       expiry: card.expiry,
       color: card.color,
+      barcode: card.barcode,
+      barcodeFormat: card.barcodeFormat,
     };
-    const fields: Record<string, string> = isPoster
-      ? {
-          ...commonFields,
-          style: "poster",
-          artworkId: card.artworkId ?? DEFAULT_POSTER_THEME.id,
-          serial: card.serial ?? "",
-        }
-      : {
-          ...commonFields,
-          barcode: card.barcode,
-          barcodeFormat: card.barcodeFormat,
-        };
     const url = `/api/pass?${new URLSearchParams(fields)}`;
-    const imageFields =
-      !isPoster && card.stripImage
-        ? { ...fields, stripImage: card.stripImage }
-        : null;
+    const imageFields = card.stripImage
+      ? { ...fields, stripImage: card.stripImage }
+      : null;
 
     setAddingToWallet(true);
     try {
@@ -1011,6 +1043,17 @@ export function IosApp() {
             e.target.value = "";
           }}
         />
+        <input
+          ref={posterInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          aria-label="Upload a poster image"
+          onChange={(e) => {
+            void handlePosterFile(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tab === "create" ? (
@@ -1020,6 +1063,7 @@ export function IosApp() {
               uploadedName={uploadedName}
               addingToWallet={addingToWallet}
               onUpload={() => uploadInput.current?.click()}
+              onPosterUpload={() => posterInput.current?.click()}
               onScan={() => cameraInput.current?.click()}
               onSave={handleSave}
               onAddToWallet={() => void handleAddToWallet(pass)}
@@ -1051,6 +1095,20 @@ export function IosApp() {
             onApply={(stripImage) => {
               setPass((prev) => ({ ...prev, barcode: "", stripImage }));
               closeCrop();
+              showToast("Image added to your card");
+            }}
+          />
+        )}
+
+        {posterSource && (
+          <PosterCropSheet
+            key={posterSource.url}
+            source={posterSource}
+            onCancel={() => setPosterSource(null)}
+            onApply={(posterImage) => {
+              const posterImageUrl = URL.createObjectURL(posterImage);
+              setPass((prev) => ({ ...prev, posterImage, posterImageUrl }));
+              setPosterSource(null);
               showToast("Image added to your card");
             }}
           />

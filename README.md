@@ -14,7 +14,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Screens
 
 - **Add a Card** — read a barcode from an image or photo, edit card info, colour slider, live card preview, add to Apple Wallet
-- **Poster style** — no-barcode Membership and Loyalty cards with bundled artwork, using Wallet's Poster Generic style on iOS 27 and a store card fallback on earlier versions
+- **Poster style** — no-barcode Membership and Loyalty cards made from an uploaded, cropped image, using Wallet's Poster Generic style on iOS 27 and a store card fallback on earlier versions
 - **Manage Wallet** — list of saved cards
 
 Design system: `#212121` background, `#FF9B5B` accent, `#D2D2FF` upload chip, Be Vietnam Pro.

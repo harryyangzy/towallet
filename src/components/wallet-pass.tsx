@@ -1,14 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { cn } from "@/lib/utils";
-import {
-  DEFAULT_POSTER_THEME,
-  darkenHex,
-  findPosterTheme,
-  isPosterCard,
-  type PassData,
-} from "@/lib/pass-types";
+import { darkenHex, isPosterCard, type PassData } from "@/lib/pass-types";
 
 interface WalletCardProps {
   pass: PassData;
@@ -48,32 +41,30 @@ const ACCENT_PATH =
   "M0 40.0134C0 14.7868 23.0664 -4.14114 47.8076 0.782887L276.808 46.36C295.522 50.0847 309 66.5093 309 85.5905V283.058L222.901 332.767H26C11.6406 332.767 0 321.127 0 306.767V40.0134Z";
 
 function PosterCard({ pass, className }: WalletCardProps) {
-  const theme = findPosterTheme(pass.artworkId) ?? DEFAULT_POSTER_THEME;
-
   return (
     <div
       className={cn(
-        "relative aspect-[4/5] w-full overflow-hidden rounded-[26px] border border-white/10",
+        "relative aspect-[4/5] w-full overflow-hidden rounded-[26px] border border-white/10 bg-[#2B2B2B] text-white",
         className,
       )}
-      style={{ backgroundColor: theme.background, color: theme.foreground }}
       data-testid="poster-card"
     >
-      <Image
-        src={`/pass-artwork/${theme.id}/artwork@2x.png`}
-        alt=""
-        fill
-        sizes="309px"
-        className="object-cover"
-        unoptimized
-      />
+      {pass.posterImageUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- local blob preview
+        <img
+          src={pass.posterImageUrl}
+          alt=""
+          className="absolute inset-0 size-full object-cover"
+        />
+      ) : (
+        <p className="absolute inset-x-6 top-[38%] text-center text-[14px] font-bold text-white/60">
+          Add an image
+        </p>
+      )}
 
       {pass.expiry && (
-        <div className="absolute top-4 right-5 z-10 text-right">
-          <p
-            className="text-[9px] leading-none font-bold tracking-[0.08em]"
-            style={{ color: theme.labelColor }}
-          >
+        <div className="absolute top-3 right-3 z-10 rounded-[10px] bg-black/55 px-2.5 py-1.5 text-right">
+          <p className="text-[9px] leading-none font-bold tracking-[0.08em] text-white/75">
             EXPIRES
           </p>
           <p className="mt-1 text-[13px] leading-none font-bold">
@@ -82,18 +73,12 @@ function PosterCard({ pass, className }: WalletCardProps) {
         </div>
       )}
 
-      <div
-        className="absolute inset-x-0 bottom-0 z-10 flex flex-col gap-3 px-5 pt-3 pb-5"
-        style={{ backgroundColor: `${theme.background}D9` }}
-      >
+      <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col gap-3 bg-black/65 px-5 pt-3 pb-5">
         <p className="truncate text-[24px] leading-tight font-bold">
           {pass.name || "Card"}
         </p>
         <div>
-          <p
-            className="text-[9px] leading-none font-bold tracking-[0.08em]"
-            style={{ color: theme.labelColor }}
-          >
+          <p className="text-[9px] leading-none font-bold tracking-[0.08em] text-white/75">
             TYPE
           </p>
           <p className="mt-1 text-[13px] leading-none font-bold">{pass.type}</p>
